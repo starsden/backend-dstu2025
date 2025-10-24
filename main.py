@@ -199,7 +199,7 @@ async def worker(worker_id: int):
 
 
 @app.post("/api/agents/register")
-async def register_agent(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
+async def reg_ag(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
     agent_id = str(uuid4())
     api_key = secrets.token_hex(16)
     status = "Active"
