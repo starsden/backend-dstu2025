@@ -20,3 +20,14 @@ class Result(Base):
     response_time = Column(Float, nullable=True)
     data = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
+
+class Agents(Base):
+    __tablename__ = "agents"
+
+    id = Column(String, primary_key=True)
+    status = Column(String)
+    name = Column(String, nullable=True)
+    desc = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    api = Column(String, nullable=True)
+

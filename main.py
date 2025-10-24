@@ -3,11 +3,13 @@ from pydantic import BaseModel
 from uuid import uuid4
 import asyncio, time, httpx, dns.resolver, json
 import redis.asyncio as redis
+import secrets
 
+from sqlalchemy import insert
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, engine, get_db
-from models import Task, Result
+from models import Task, Result, Agents
 
 app = FastAPI(title="dns check")
 
@@ -25,6 +27,12 @@ class CheckRequest(BaseModel):
     type: str
     port: int | None = None
     record_type: str | None = None
+
+class AgentRegisterRequest(BaseModel):
+    name: str
+    desc: str
+    email: str
+
 @app.on_event("startup")
 async def startup():
     async with engine.begin() as conn:
@@ -188,7 +196,35 @@ async def worker(worker_id: int):
             except Exception as e:
                 db.add(Result(id=task["id"], status="error", error=str(e)))
                 await db.commit()
-                print(f"[Worker-{worker_id}] ❌ Error: {e}")
+
+
+@app.post("/api/agents/register")
+async def register_agent(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
+    agent_id = str(uuid4())
+    api_key = secrets.token_hex(16)
+    status = "Active"
+
+    new_agent = Agents(
+        id=agent_id,
+        status=status,
+        name=req.name,
+        desc=req.desc,
+        email=req.email,
+        api=api_key
+    )
+
+    db.add(new_agent)
+    await db.commit()
+
+    return {
+        "id": agent_id,
+        "status": status,
+        "api_key": api_key,
+        "name": req.name,
+        "desc": req.desc,
+        "email": req.email
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
