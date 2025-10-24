@@ -1,16 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from uuid import uuid4
-import asyncio
-import time
-import httpx
-import socket
-import dns.resolver
+import asyncio, time, httpx, dns.resolver
+from sqlalchemy import Column, String, Float, JSON, Text
+from sqlalchemy.future import select
+from sqlalchemy.dialects.sqlite import BLOB
+from sqlalchemy.ext.asyncio import AsyncSession
+from database import Base, engine, get_db
+from models import Task, Result
 
 app = FastAPI(title="Aeza Host Checker")
 
-tasks = {}
-results = {}
+queue = asyncio.Queue()
 
 class CheckRequest(BaseModel):
     target: str
@@ -18,145 +19,115 @@ class CheckRequest(BaseModel):
     port: int | None = None
     record_type: str | None = None
 
-class CheckResult(BaseModel):
-    id: str
-    status: str
-    code: int | None = None
-    response_time: float | None = None
-    data: dict | None = None
-    error: str | None = None
+@app.on_event("startup")
+async def startup_event():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    asyncio.create_task(worker())
 
-queue = asyncio.Queue()
 @app.post("/api/checks")
-async def checkalka(req: CheckRequest):
+async def create_check(req: CheckRequest, db: AsyncSession = Depends(get_db)):
     task_id = str(uuid4())
-    task = req.model_dump()
-    task["id"] = task_id
-    tasks[task_id] = task
-    await queue.put(task)
+    new_task = Task(id=task_id, target=req.target, type=req.type,
+                    port=req.port, record_type=req.record_type)
+    db.add(new_task)
+    await db.commit()
+    await queue.put(req.model_dump() | {"id": task_id})
     return {"id": task_id, "status": "queued"}
 
-
 @app.get("/api/checks/{task_id}")
-async def getcheck(task_id: str):
-    if task_id not in tasks:
-        return {"error": "Task not found"}
-    if task_id not in results:
+async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Result).where(Result.id == task_id))
+    rec = result.scalar()
+    if not rec:
         return {"id": task_id, "status": "pending"}
-    return results[task_id]
+    return {
+        "id": rec.id,
+        "status": rec.status,
+        "code": rec.code,
+        "response_time": rec.response_time,
+        "data": rec.data,
+        "error": rec.error
+    }
 
-
-@app.on_event("startup")
 async def worker():
-    async def taski():
-        while True:
-            task = await queue.get()
-            start = time.time()
+    async def process():
+        async with AsyncSession(engine) as db:
+            while True:
+                task = await queue.get()
+                start = time.time()
+                try:
+                    if task["type"] == "http":
+                        async with httpx.AsyncClient(follow_redirects=True) as client:
+                            r = await client.get(task["target"], timeout=5)
+                            data = {"headers": dict(r.headers), "url": str(r.url)}
+                            status = "ok" if r.status_code < 400 else "fail"
+                            db.add(Result(id=task["id"], status=status,
+                                          code=r.status_code,
+                                          response_time=time.time()-start,
+                                          data=data))
+                            await db.commit()
 
-            try:
-                # HTTP
-                if task["type"] == "http":
-                    async with httpx.AsyncClient(follow_redirects=True) as client:
-                        r = await client.get(task["target"], timeout=5)
-                        results[task["id"]] = {
-                            "id": task["id"],
-                            "status": "ok" if r.status_code < 400 else "fail",
-                            "code": r.status_code,
-                            "response_time": time.time() - start,
-                            "data": {
-                                "headers": dict(r.headers),
-                                "url": str(r.url)
-                            },
-                            "error": None
-                        }
+                    elif task["type"] == "ping":
+                        import asyncio
+                        proc = await asyncio.create_subprocess_shell(
+                            f"ping -c 1 {task['target']}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE)
+                        out, err = await proc.communicate()
+                        ok = proc.returncode == 0
+                        resp_time = None
+                        if ok and b"time=" in out:
+                            line = out.decode().split("time=")[1]
+                            resp_time = float(line.split(" ")[0])
+                        db.add(Result(id=task["id"], status="ok" if ok else "fail",
+                                      response_time=resp_time,
+                                      data={"output": out.decode()},
+                                      error=None if ok else err.decode()))
+                        await db.commit()
 
-                # PING
-                elif task["type"] == "ping":
-                    host = task["target"]
-                    proc = await asyncio.create_subprocess_shell(
-                        f"ping -c 1 {host}",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
-                    )
-                    stdout, stderr = await proc.communicate()
-                    success = proc.returncode == 0
-                    response_time = None
-                    if success and b"time=" in stdout:
-                        line = stdout.decode().split("time=")[1]
-                        response_time = float(line.split(" ")[0])
-                    results[task["id"]] = {
-                        "id": task["id"],
-                        "status": "ok" if success else "fail",
-                        "code": 0,
-                        "response_time": response_time,
-                        "data": {"output": stdout.decode()},
-                        "error": None if success else stderr.decode()
-                    }
+                    elif task["type"] == "tcp":
+                        host, port = task["target"], task.get("port", 80)
+                        try:
+                            reader, writer = await asyncio.open_connection(host, port)
+                            writer.close()
+                            await writer.wait_closed()
+                            ok = True
+                        except Exception as e:
+                            ok = False
+                            err = str(e)
+                        db.add(Result(id=task["id"], status="ok" if ok else "fail",
+                                      response_time=time.time()-start,
+                                      data={"host": host, "port": port},
+                                      error=None if ok else err))
+                        await db.commit()
 
-                # TCP
-                elif task["type"] == "tcp":
-                    host, port = task["target"], task.get("port", 80)
-                    start = time.time()
-                    try:
-                        reader, writer = await asyncio.open_connection(host, port)
-                        writer.close()
-                        await writer.wait_closed()
-                        success = True
-                    except Exception as e:
-                        success = False
-                        raise e
-                    results[task["id"]] = {
-                        "id": task["id"],
-                        "status": "ok" if success else "fail",
-                        "response_time": time.time() - start,
-                        "data": {"host": host, "port": port},
-                        "error": None if success else "Connection failed"
-                    }
+                    elif task["type"] == "traceroute":
+                        proc = await asyncio.create_subprocess_shell(
+                            f"traceroute -m 15 {task['target']}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE)
+                        out, err = await proc.communicate()
+                        ok = proc.returncode == 0
+                        db.add(Result(id=task["id"], status="ok" if ok else "fail",
+                                      response_time=time.time()-start,
+                                      data={"trace": out.decode().splitlines()},
+                                      error=None if ok else err.decode()))
+                        await db.commit()
 
-                # TRACEROUTE
-                elif task["type"] == "traceroute":
-                    host = task["target"]
-                    proc = await asyncio.create_subprocess_shell(
-                        f"traceroute -m 15 {host}",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
-                    )
-                    stdout, stderr = await proc.communicate()
-                    success = proc.returncode == 0
-                    results[task["id"]] = {
-                        "id": task["id"],
-                        "status": "ok" if success else "fail",
-                        "response_time": time.time() - start,
-                        "data": {"trace": stdout.decode().splitlines()},
-                        "error": None if success else stderr.decode()
-                    }
+                    elif task["type"] == "dns":
+                        resolver = dns.resolver.Resolver()
+                        rt = task.get("record_type", "A").upper()
+                        answer = resolver.resolve(task["target"], rt)
+                        data = [rdata.to_text() for rdata in answer]
+                        db.add(Result(id=task["id"], status="ok",
+                                      response_time=time.time()-start,
+                                      data={"records": data, "type": rt}))
+                        await db.commit()
 
-                # DNS
-                elif task["type"] == "dns":
-                    host = task["target"]
-                    record_type = task.get("record_type", "A").upper()
-                    resolver = dns.resolver.Resolver()
-                    answer = resolver.resolve(host, record_type)
-                    data = [rdata.to_text() for rdata in answer]
-                    results[task["id"]] = {
-                        "id": task["id"],
-                        "status": "ok",
-                        "response_time": time.time() - start,
-                        "data": {"records": data, "type": record_type},
-                        "error": None
-                    }
-
-            except Exception as e:
-                results[task["id"]] = {
-                    "id": task["id"],
-                    "status": "error",
-                    "code": None,
-                    "response_time": None,
-                    "data": None,
-                    "error": str(e)
-                }
-
-            finally:
-                queue.task_done()
-
-    asyncio.create_task(taski())
+                except Exception as e:
+                    db.add(Result(id=task["id"], status="error", error=str(e)))
+                    await db.commit()
+                finally:
+                    queue.task_done()
+    asyncio.create_task(process())

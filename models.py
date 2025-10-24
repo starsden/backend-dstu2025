@@ -1,0 +1,22 @@
+from sqlalchemy import Column, String, Float, JSON, Text
+from database import Base
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(String, primary_key=True)
+    target = Column(String, nullable=False)
+    type = Column(String, nullable=False)
+    port = Column(Float, nullable=True)
+    record_type = Column(String, nullable=True)
+
+
+class Result(Base):
+    __tablename__ = "results"
+
+    id = Column(String, primary_key=True)
+    status = Column(String)
+    code = Column(Float, nullable=True)
+    response_time = Column(Float, nullable=True)
+    data = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
