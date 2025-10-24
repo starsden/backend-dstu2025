@@ -10,6 +10,7 @@ from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, engine, get_db
 from models import Task, Result, Agents
+from smtp import send_api
 
 app = FastAPI(title="dns check")
 
@@ -215,6 +216,7 @@ async def reg_ag(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
 
     db.add(new_agent)
     await db.commit()
+    send_api(req.email, req.name, api_key)
 
     return {
         "id": agent_id,
