@@ -109,37 +109,76 @@ async def startup():
 
 @app.post("/api/checks", tags=["Main Reqs"])
 async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
-    task_id = str(uuid4())
+    group_id = str(uuid4())
 
     if req.type == "full":
-        group_id = task_id
         checks = [
             {"type": "ping"},
             {"type": "http"},
-            {"type": "tcp"},
+            {"type": "tcp", "port": req.port or 80},
             {"type": "traceroute"},
             {"type": "dns"}
         ]
+
+        sub_task_ids = []
         for ch in checks:
             sub_id = str(uuid4())
-            new_task = Task(id=task_id, target=req.target, type=req.type,
-                            port=req.port, record_type=req.record_type)
+            sub_task_ids.append(sub_id)
+            new_task = Task(
+                id=sub_id,
+                target=req.target,
+                type=ch["type"],
+                port=ch.get("port", req.port),
+                record_type=None,
+                group_id=group_id
+            )
             db.add(new_task)
-            await db.commit()
-
             task_data = {
                 "id": sub_id,
                 "group_id": group_id,
                 "target": req.target,
                 "type": ch["type"],
-                "port": req.port,
-                "record_type": req.record_type
+                "port": ch.get("port", req.port),
+                "record_type": None
             }
-            await dispatch_task(task_data)
-        return {"id": group_id, "status": "queued", "parts": len(checks)}
+            await redis_client.lpush("task_queue", json.dumps(task_data))
+            print(f"📦 Sub-task {sub_id} added to Redis queue for group {group_id}")
 
-    new_task = Task(id=task_id, target=req.target, type=req.type,
-                    port=req.port, record_type=req.record_type)
+        await db.commit()
+        results = []
+        timeout = 30
+        start_time = time.time()
+        while len(results) < len(checks) and (time.time() - start_time) < timeout:
+            result_query = await db.execute(select(Result).where(Result.id.in_(sub_task_ids)))
+            results = result_query.scalars().all()
+            if len(results) < len(checks):
+                await asyncio.sleep(0.5)
+
+        full_result = {
+            "id": group_id,
+            "status": "completed" if len(results) == len(checks) else "partial",
+            "results": [
+                {
+                    "type": r.data.get("type"),
+                    "status": r.status,
+                    "code": r.code,
+                    "response_time": r.response_time,
+                    "data": r.data,
+                    "error": r.error
+                }
+                for r in results
+            ]
+        }
+        return full_result
+
+    task_id = str(uuid4())
+    new_task = Task(
+        id=task_id,
+        target=req.target,
+        type=req.type,
+        port=req.port,
+        record_type=req.record_type
+    )
     db.add(new_task)
     await db.commit()
 
@@ -284,12 +323,20 @@ async def worker(worker_id: int):
 
                 elif task["type"] == "dns":
                     resolver = dns.resolver.Resolver()
-                    rt = task.get("record_type", "A").upper()
-                    answer = resolver.resolve(task["target"], rt)
-                    data = [rdata.to_text() for rdata in answer]
-                    db.add(Result(id=task["id"], status="ok",
-                                  response_time=time.time()-start,
-                                  data={"records": data, "type": rt}))
+                    record_types = ["A", "AAAA", "MX", "NS", "TXT", "CNAME"]
+                    dns_results = {}
+                    for rt in record_types:
+                        try:
+                            answer = resolver.resolve(task["target"], rt)
+                            dns_results[rt] = [rdata.to_text() for rdata in answer]
+                        except Exception as e:
+                            dns_results[rt] = {"error": str(e)}
+                    db.add(Result(
+                        id=task["id"],
+                        status="ok",
+                        response_time=time.time() - start,
+                        data={"records": dns_results, "type": "dns"}
+                    ))
                     await db.commit()
 
             except Exception as e:
@@ -415,7 +462,7 @@ async def login(req: AdminLoginRequest, db: AsyncSession = Depends(get_db)):
         "access_token": access_token,
         "token_type": "bearer"
     }
-@app.websocket("/ws/agents/count")
+@app.websocket("/ws/agentiki/count")
 async def ag_count(websocket: WebSocket):
     await websocket.accept()
     try:

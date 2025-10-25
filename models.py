@@ -9,6 +9,7 @@ class Task(Base):
     type = Column(String, nullable=False)
     port = Column(Float, nullable=True)
     record_type = Column(String, nullable=True)
+    group_id = Column(String, nullable=True)
 
 
 class Result(Base):
