@@ -22,7 +22,6 @@ from fastapi import HTTPException
 app = FastAPI(title="dns check")
 active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
-
 # redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0, encoding="utf-8", decode_responses=True)
 
 app.add_middleware(
@@ -164,6 +163,7 @@ async def worker(worker_id: int):
                 elif task["type"] == "ping":
                     proc = await asyncio.create_subprocess_shell(
                         f"ping -c 1 {task['target']}",
+                        shell=True,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
@@ -198,6 +198,7 @@ async def worker(worker_id: int):
                 elif task["type"] == "traceroute":
                     proc = await asyncio.create_subprocess_shell(
                         f"traceroute -m 10 -w 2 {task['target']}",
+                        shell=True,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
