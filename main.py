@@ -163,7 +163,6 @@ async def worker(worker_id: int):
                 elif task["type"] == "ping":
                     proc = await asyncio.create_subprocess_shell(
                         f"/bin/ping -c 1 {task['target']}",
-                        shell=True,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
@@ -197,8 +196,7 @@ async def worker(worker_id: int):
 
                 elif task["type"] == "traceroute":
                     proc = await asyncio.create_subprocess_shell(
-                        f"traceroute -m 10 -w 2 {task['target']}",
-                        shell=True,
+                        f"/bin/traceroute -m 10 -w 2 {task['target']}",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
