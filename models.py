@@ -39,5 +39,11 @@ class ActiveAgents(Base):
     name = Column(String, nullable=True)
     api = Column(String, nullable=True)
 
+class Admin(Base):
+    __tablename__ = "admins"
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    username = Column(String, unique=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+
 
 

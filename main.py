@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 from uuid import uuid4
 import asyncio, time, httpx, dns.resolver, json
@@ -6,19 +6,27 @@ import redis.asyncio as redis
 import secrets
 import os
 
-from fastapi import WebSocket, WebSocketDisconnect
+from passlib.context import CryptContext
+from datetime import datetime, timedelta
+import jwt
+from fastapi.security import OAuth2PasswordBearer
+from keys import secretik
 from sqlalchemy import insert
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, engine, get_db
-from models import Task, Result, Agents, ActiveAgents
+from models import Task, Result, Agents, ActiveAgents, Admin
 from smtp import send_api
 from fastapi.middleware.cors import CORSMiddleware
-
-
 from sqlalchemy import Column, String
-from fastapi import HTTPException
 
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+SECRET_KEY = secretik
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/papers")
 active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
@@ -35,6 +43,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def get_adm(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except jwt.PyJWTError:
+        raise credentials_exception
+
+    async with AsyncSession(engine) as db:
+        result = await db.execute(select(Admin).where(Admin.username == username))
+        admin = result.scalar()
+        if admin is None:
+            raise credentials_exception
+        return admin
+
+
 
 async def checkalka_redisa():
     try:
@@ -56,6 +88,10 @@ class AgentRegisterRequest(BaseModel):
     name: str
     desc: str
     email: str
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
 
 @app.on_event("startup")
 async def startup():
@@ -140,7 +176,7 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
     return {"id": task_id, "status": "pending"}
 
 @app.delete("/api/agents/{agent_id}", tags=["Admin Reqs"])
-async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db), current_admin: Admin = Depends(get_adm)):
     q = await db.execute(select(Agents).where(Agents.id == agent_id))
     a = q.scalar()
     if not a:
@@ -308,7 +344,7 @@ async def activate_agent(req: AgentApiKeyRequest, db: AsyncSession = Depends(get
 
 
 @app.get("/api/agents", tags=["Admin Reqs"])
-async def get_agents(db: AsyncSession = Depends(get_db)):
+async def get_agents(db: AsyncSession = Depends(get_db), current_admin: Admin = Depends(get_adm)):
     agents_res = await db.execute(select(Agents))
     agents = agents_res.scalars().all()
 
@@ -339,6 +375,28 @@ async def get_agents(db: AsyncSession = Depends(get_db)):
             "inactive": inact_cout
         },
         "agents": agents_data
+    }
+
+
+@app.post("/api/login", tags=["Admin Reqs"])
+async def login(req: AdminLoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Admin).where(Admin.username == req.username))
+    admin = result.scalar()
+
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    if not pwd_context.verify(req.password, admin.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + access_token_expires
+    to_encode = {"sub": admin.username, "exp": expire}
+    access_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
     }
 @app.websocket("/ws/agents/count")
 async def ag_count(websocket: WebSocket):
@@ -443,6 +501,19 @@ async def dispatch_task(task_data: dict):
                 print(f"⚠️ Failed to send task to agent {api_key}: {e}")
     else:
         print("⚠️ No active agents connected — task will be processed locally by worker")
+
+
+@app.post("/api/admin/register", tags=["Admin Reqs"])
+async def register_admin(req: AdminLoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Admin).where(Admin.username == req.username))
+    if result.scalar():
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    hashed_password = pwd_context.hash(req.password)
+    new_admin = Admin(id=str(uuid4()), username=req.username, hashed_password=hashed_password)
+    db.add(new_admin)
+    await db.commit()
+    return {"message": f"Admin {req.username} registered successfully"}
 
 
 
