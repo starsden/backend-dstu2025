@@ -255,7 +255,11 @@ async def worker(worker_id: int):
                 if task["type"] == "http":
                     async with httpx.AsyncClient(follow_redirects=True) as client:
                         r = await client.get(task["target"], timeout=5)
-                        data = {"headers": dict(r.headers), "url": str(r.url)}
+                        data = {
+                            "headers": dict(r.headers),
+                            "url": str(r.url),
+                            "type": "http"  # ДОБАВЬТЕ ЭТО
+                        }
                         status = "ok" if r.status_code < 400 else "fail"
                         db.add(Result(id=task["id"], status=status,
                                       code=r.status_code,
@@ -286,7 +290,10 @@ async def worker(worker_id: int):
                         id=task["id"],
                         status="ok" if ok else "fail",
                         response_time=resp_time,
-                        data={"output": out_decoded},
+                        data={
+                            "output": out_decoded,
+                            "type": "ping"
+                        },
                         error=None if ok else err_decoded
                     ))
                     await db.commit()
@@ -304,7 +311,11 @@ async def worker(worker_id: int):
                         err = str(e)
                     db.add(Result(id=task["id"], status="ok" if ok else "fail",
                                   response_time=time.time()-start,
-                                  data={"host": host, "port": port},
+                                  data={
+                                      "host": host,
+                                      "port": port,
+                                      "type": "tcp"
+                                  },
                                   error=err))
                     await db.commit()
 
@@ -317,7 +328,10 @@ async def worker(worker_id: int):
                     ok = proc.returncode == 0
                     db.add(Result(id=task["id"], status="ok" if ok else "fail",
                                   response_time=time.time()-start,
-                                  data={"trace": out.decode().splitlines()},
+                                  data={
+                                      "trace": out.decode().splitlines(),
+                                      "type": "traceroute"
+                                  },
                                   error=None if ok else err.decode()))
                     await db.commit()
 
@@ -335,12 +349,20 @@ async def worker(worker_id: int):
                         id=task["id"],
                         status="ok",
                         response_time=time.time() - start,
-                        data={"records": dns_results, "type": "dns"}
+                        data={
+                            "records": dns_results,
+                            "type": "dns"
+                        }
                     ))
                     await db.commit()
 
             except Exception as e:
-                db.add(Result(id=task["id"], status="error", error=str(e)))
+                db.add(Result(
+                    id=task["id"],
+                    status="error",
+                    error=str(e),
+                    data={"type": task["type"]}
+                ))
                 await db.commit()
 
 
