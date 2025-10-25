@@ -19,6 +19,8 @@ from models import Task, Result, Agents, ActiveAgents, Admin
 from smtp import send_api
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Column, String
+from fastapi.responses import JSONResponse
+
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -28,6 +30,17 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/papers")
+
+@app.middleware("http")
+async def ensure_utf8(request, call_next):
+    response = await call_next(request)
+    if isinstance(response, JSONResponse):
+        response.headers["Content-Type"] = "application/json; charset=utf-8"
+    elif response.headers.get("content-type", "").startswith("text/"):
+        response.headers["Content-Type"] = response.headers["Content-Type"] + "; charset=utf-8"
+    return response
+
+
 active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
 # redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0, encoding="utf-8", decode_responses=True)
