@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Column, String
 from fastapi import HTTPException
 
-app = FastAPI(title="dns check")
+app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/papers")
 active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
 # redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0, encoding="utf-8", decode_responses=True)
@@ -65,7 +65,7 @@ async def startup():
     for i in range(5):
         asyncio.create_task(worker(i))
 
-@app.post("/api/checks")
+@app.post("/api/checks", tags=["Main reqs"])
 async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
     task_id = str(uuid4())
 
@@ -105,7 +105,7 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
     await dispatch_task(task_data)
     return {"id": task_id, "status": "queued"}
 
-@app.get("/api/checks/{task_id}")
+@app.get("/api/checks/{task_id}", tags=["Main reqs"])
 async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Result).where(Result.id == task_id))
     rec = result.scalar()
@@ -222,7 +222,7 @@ async def worker(worker_id: int):
                 await db.commit()
 
 
-@app.post("/api/agents/register")
+@app.post("/api/agents/register", tags=["Agents Req"])
 async def reg_ag(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
     agent_id = str(uuid4())
     api_key = secrets.token_hex(16)
@@ -251,7 +251,7 @@ async def reg_ag(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
     }
 
 
-@app.post("/api/agents/activate")
+@app.post("/api/agents/activate", tags=["Agents Req"])
 async def activate_agent(req: AgentApiKeyRequest, db: AsyncSession = Depends(get_db)):
     agent = await db.execute(select(Agents).where(Agents.api == req.api_key))
     agent = agent.scalar()
@@ -285,7 +285,7 @@ async def activate_agent(req: AgentApiKeyRequest, db: AsyncSession = Depends(get
     }
 
 
-@app.get("/api/agents")
+@app.get("/api/agents", tags=["Agents Req"])
 async def get_agents(db: AsyncSession = Depends(get_db)):
     agents_res = await db.execute(select(Agents))
     agents = agents_res.scalars().all()
