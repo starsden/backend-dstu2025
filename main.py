@@ -107,11 +107,22 @@ async def startup():
     for i in range(5):
         asyncio.create_task(worker(i))
 
+
 @app.post("/api/checks", tags=["Main Reqs"])
 async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
-    group_id = str(uuid4())
-
     if req.type == "full":
+        group_id = str(uuid4())
+
+        main_task = Task(
+            id=group_id,
+            target=req.target,
+            type="full",
+            port=req.port,
+            record_type=None,
+            group_id=group_id
+        )
+        db.add(main_task)
+
         checks = [
             {"type": "ping"},
             {"type": "http"},
@@ -145,32 +156,8 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
             print(f"📦 Sub-task {sub_id} added to Redis queue for group {group_id}")
 
         await db.commit()
-        results = []
-        timeout = 30
-        start_time = time.time()
-        while len(results) < len(checks) and (time.time() - start_time) < timeout:
-            result_query = await db.execute(select(Result).where(Result.id.in_(sub_task_ids)))
-            results = result_query.scalars().all()
-            if len(results) < len(checks):
-                await asyncio.sleep(0.5)
 
-        full_result = {
-            "id": group_id,
-            "status": "completed" if len(results) == len(checks) else "partial",
-            "results": [
-                {
-                    "type": r.data.get("type") if r.data else None,
-                    "status": r.status,
-                    "code": r.code,
-                    "response_time": r.response_time,
-                    "data": r.data,
-                    "error": r.error
-                }
-                for r in results
-            ]
-        }
-        return full_result
-
+        return {"id": group_id, "status": "queued"}
     task_id = str(uuid4())
     new_task = Task(
         id=task_id,
