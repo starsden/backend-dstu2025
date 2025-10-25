@@ -285,6 +285,50 @@ async def activate_agent(req: AgentApiKeyRequest, db: AsyncSession = Depends(get
     }
 
 
+@app.get("/api/agents")
+async def get_agents(db: AsyncSession = Depends(get_db)):
+    agents_res = await db.execute(select(Agents))
+    agents = agents_res.scalars().all()
+
+    act_agents = await db.execute(select(ActiveAgents))
+    aa_list = act_agents.scalars().all()
+    act_api_keys = {agent.api for agent in aa_list}
+
+    agents_data = []
+    for agent in agents:
+        is_active = agent.api in act_api_keys
+        agents_data.append({
+            "id": agent.id,
+            "name": agent.name,
+            "desc": agent.desc,
+            "email": agent.email,
+            "status": "Active" if is_active else "Inactive",
+            "api_key": agent.api
+        })
+
+    total = len(agents)
+    act_cout = len(aa_list)
+    inact_cout = total - act_cout
+
+    return {
+        "statistics": {
+            "total": total,
+            "active": act_cout,
+            "inactive": inact_cout
+        },
+        "agents": agents_data
+    }
+@app.websocket("/ws/agents/count")
+async def ag_count(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_json({"online": len(active_agents)})
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        pass
+
+
 
 @app.websocket("/ws/agent")
 async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
