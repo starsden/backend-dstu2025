@@ -173,6 +173,7 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
     await dispatch_task(task_data)
     return {"id": task_id, "status": "queued"}
 
+
 @app.get("/api/checks/{task_id}", tags=["Main Reqs"])
 async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Result).where(Result.id == task_id))
@@ -186,9 +187,9 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
             "data": rec.data,
             "error": rec.error
         }
-
     results = await db.execute(select(Result).where(Result.data['group_id'].as_string() == task_id))
     res_list = results.scalars().all()
+
     if res_list:
         return {
             "id": task_id,
@@ -205,6 +206,32 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
                 for r in res_list
             ]
         }
+
+    task_query = await db.execute(select(Task).where(Task.id == task_id))
+    main_task = task_query.scalar()
+    if main_task and main_task.type == "full":
+        sub_results = await db.execute(select(Result).where(Result.data['group_id'].as_string() == task_id))
+        sub_res_list = sub_results.scalars().all()
+
+        if sub_res_list:
+            return {
+                "id": task_id,
+                "status": "completed" if all(r.status != "pending" for r in sub_res_list) else "pending",
+                "results": [
+                    {
+                        "type": r.data.get("type") if r.data else None,
+                        "status": r.status,
+                        "code": r.code,
+                        "response_time": r.response_time,
+                        "data": r.data,
+                        "error": r.error
+                    }
+                    for r in sub_res_list
+                ]
+            }
+        else:
+            return {"id": task_id, "status": "pending"}
+
     return {"id": task_id, "status": "pending"}
 
 @app.delete("/api/agents/{agent_id}", tags=["Admin Reqs"])
