@@ -31,16 +31,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/papers")
 
-@app.middleware("http")
-async def ensure_utf8(request, call_next):
-    response = await call_next(request)
-    if isinstance(response, JSONResponse):
-        response.headers["Content-Type"] = "application/json; charset=utf-8"
-    elif response.headers.get("content-type", "").startswith("text/"):
-        response.headers["Content-Type"] = response.headers["Content-Type"] + "; charset=utf-8"
-    return response
-
-
 active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
 # redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0, encoding="utf-8", decode_responses=True)
@@ -233,35 +223,23 @@ async def worker(worker_id: int):
 
                 elif task["type"] == "ping":
                     proc = await asyncio.create_subprocess_shell(
-                        f"/bin/ping -c 1 {task['target']}",
+                        f"LC_ALL=C ping -c 1 {task['target']}",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
-                    try:
-                        decoded_out = out.decode("utf-8")
-                    except UnicodeDecodeError:
-                        decoded_out = out.decode("cp866", errors="replace")
-                    try:
-                        decoded_err = err.decode("utf-8")
-                    except UnicodeDecodeError:
-                        decoded_err = err.decode("cp866", errors="replace")
                     ok = proc.returncode == 0
                     resp_time = None
-                    if ok and "time=" in decoded_out:
+                    if ok and b"time=" in out:
                         try:
-                            line = decoded_out.split("time=")[1]
+                            line = out.decode("utf-8").split("time=")[1]
                             resp_time = float(line.split(" ")[0])
                         except:
                             pass
-                    db.add(Result(
-                        id=task["id"],
-                        status="ok" if ok else "fail",
-                        response_time=resp_time,
-                        data={"output": decoded_out},
-                        error=None if ok else decoded_err
-                    ))
+                    db.add(Result(id=task["id"], status="ok" if ok else "fail",
+                                  response_time=resp_time,
+                                  data={"output": out.decode("utf-8")},
+                                  error=None if ok else err.decode("utf-8")))
                     await db.commit()
-
 
                 elif task["type"] == "tcp":
                     host, port = task["target"], task.get("port", 80)
