@@ -5,6 +5,7 @@ import asyncio, time, httpx, dns.resolver, json
 import redis.asyncio as redis
 import secrets
 import os
+import locale
 
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
@@ -227,18 +228,26 @@ async def worker(worker_id: int):
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
+                    encoding = locale.getpreferredencoding(False)
+                    out_decoded = out.decode(encoding, errors="replace")
+                    err_decoded = err.decode(encoding, errors="replace")
+
                     ok = proc.returncode == 0
                     resp_time = None
-                    if ok and b"time=" in out:
+                    if ok and "time=" in out_decoded:
                         try:
-                            line = out.decode("utf-8").split("time=")[1]
+                            line = out_decoded.split("time=")[1]
                             resp_time = float(line.split(" ")[0])
                         except:
                             pass
-                    db.add(Result(id=task["id"], status="ok" if ok else "fail",
-                                  response_time=resp_time,
-                                  data={"output": out.decode("utf-8")},
-                                  error=None if ok else err.decode("utf-8")))
+
+                    db.add(Result(
+                        id=task["id"],
+                        status="ok" if ok else "fail",
+                        response_time=resp_time,
+                        data={"output": out_decoded},
+                        error=None if ok else err_decoded
+                    ))
                     await db.commit()
 
                 elif task["type"] == "tcp":
