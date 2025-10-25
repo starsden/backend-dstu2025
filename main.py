@@ -139,7 +139,7 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
         }
     return {"id": task_id, "status": "pending"}
 
-@app.delete("/api/agents/{agent_id}", tags=["Agents Req"])
+@app.delete("/api/agents/{agent_id}", tags=["Admin Reqs"])
 async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
     q = await db.execute(select(Agents).where(Agents.id == agent_id))
     a = q.scalar()
@@ -307,7 +307,7 @@ async def activate_agent(req: AgentApiKeyRequest, db: AsyncSession = Depends(get
     }
 
 
-@app.get("/api/agents", tags=["Agents Req"])
+@app.get("/api/agents", tags=["Admin Reqs"])
 async def get_agents(db: AsyncSession = Depends(get_db)):
     agents_res = await db.execute(select(Agents))
     agents = agents_res.scalars().all()
