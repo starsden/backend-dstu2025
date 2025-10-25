@@ -162,7 +162,7 @@ async def worker(worker_id: int):
 
                 elif task["type"] == "ping":
                     proc = await asyncio.create_subprocess_shell(
-                        f"ping -c 1 {task['target']}",
+                        f"/bin/ping -c 1 {task['target']}",
                         shell=True,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
