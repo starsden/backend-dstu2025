@@ -551,21 +551,20 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
         if api_key in active_agents:
             del active_agents[api_key]
 async def dispatch_task(task_data: dict):
-    await redis_client.lpush("task_queue", json.dumps(task_data))
-    print(f"📦 Task {task_data['id']} added to Redis queue")
     if active_agents:
-        for api_key, ws in active_agents.items():
-            try:
-                await ws.send_text(json.dumps({
-                    "type": "task",
-                    "task_id": task_data["id"],
-                    "data": task_data
-                }))
-                print(f"📤 Task {task_data['id']} sent to agent {api_key}")
-            except Exception as e:
-                print(f"⚠️ Failed to send task to agent {api_key}: {e}")
+        import random
+        api_key = random.choice(list(active_agents.keys()))
+        ws = active_agents[api_key]
+        try:
+            await ws.send_text(json.dumps({
+                "type": "task",
+                "task_id": task_data["id"],
+                "data": task_data
+            }))
+        except Exception as e:
+            await redis_client.lpush("task_queue", json.dumps(task_data))
     else:
-        print("⚠️ No active agents connected — task will be processed locally by worker")
+        await redis_client.lpush("task_queue", json.dumps(task_data))
 
 
 @app.post("/api/admin/register", tags=["Admin Reqs"])
