@@ -498,7 +498,7 @@ async def login(req: AdminLoginRequest, db: AsyncSession = Depends(get_db)):
         "access_token": access_token,
         "token_type": "bearer"
     }
-@app.websocket("/ws/agents/count")
+@app.websocket("/ws/onlineag") #count
 async def ag_count(websocket: WebSocket):
     await websocket.accept()
     try:
