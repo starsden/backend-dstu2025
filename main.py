@@ -159,7 +159,7 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
             "status": "completed" if len(results) == len(checks) else "partial",
             "results": [
                 {
-                    "type": r.data.get("type"),
+                    "type": r.data.get("type") if r.data else None,
                     "status": r.status,
                     "code": r.code,
                     "response_time": r.response_time,
@@ -208,7 +208,7 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
             "status": "completed" if all(r.status != "pending" for r in res_list) else "pending",
             "results": [
                 {
-                    "type": r.data.get("type"),
+                    "type": r.data.get("type") if r.data else None,
                     "status": r.status,
                     "code": r.code,
                     "response_time": r.response_time,
