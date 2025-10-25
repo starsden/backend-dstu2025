@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, engine, get_db
 from models import Task, Result, Agents, ActiveAgents
 from smtp import send_api
+from fastapi.middleware.cors import CORSMiddleware
+
 
 from sqlalchemy import Column, String
 from fastapi import HTTPException
@@ -22,6 +24,18 @@ active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
 
 # redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0, encoding="utf-8", decode_responses=True)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8501",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 async def checkalka_redisa():
     try:
