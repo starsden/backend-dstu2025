@@ -67,7 +67,7 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
         ]
         for ch in checks:
             sub_id = str(uuid4())
-            new_task = Task(id=sub_id, target=req.target, type=ch["type"],
+            new_task = Task(id=task_id, target=req.target, type=req.type,
                             port=req.port, record_type=req.record_type)
             db.add(new_task)
             await db.commit()
@@ -80,7 +80,7 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
                 "port": req.port,
                 "record_type": req.record_type
             }
-            await redis_client.lpush("task_queue", json.dumps(task_data))
+            await dispatch_task(task_data)
         return {"id": group_id, "status": "queued", "parts": len(checks)}
 
     new_task = Task(id=task_id, target=req.target, type=req.type,
@@ -88,8 +88,8 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
     db.add(new_task)
     await db.commit()
 
-    task = req.model_dump() | {"id": task_id}
-    await redis_client.lpush("task_queue", json.dumps(task))
+    task_data = req.model_dump() | {"id": task_id}
+    await dispatch_task(task_data)
     return {"id": task_id, "status": "queued"}
 
 @app.get("/api/checks/{task_id}")
@@ -313,17 +313,29 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
             if data.get("type") == "result":
                 result_data = data["result"]
-                new_result = Result(
-                    id=result_data["id"],
-                    status=result_data["status"],
-                    code=result_data.get("code"),
-                    response_time=result_data.get("response_time"),
-                    data=result_data.get("data"),
-                    error=result_data.get("error")
-                )
-                db.add(new_result)
-                await db.commit()
+
+                existing = await db.get(Result, result_data["id"])
+                if not existing:
+                    new_result = Result(
+                        id=result_data["id"],
+                        status=result_data["status"],
+                        code=result_data.get("code"),
+                        response_time=result_data.get("response_time"),
+                        data=result_data.get("data"),
+                        error=result_data.get("error")
+                    )
+                    db.add(new_result)
+                    await db.commit()
+                else:
+                    existing.status = result_data["status"]
+                    existing.code = result_data.get("code")
+                    existing.response_time = result_data.get("response_time")
+                    existing.data = result_data.get("data")
+                    existing.error = result_data.get("error")
+                    await db.commit()
+
                 print(f"✅ Результат получен от агента {agent.name} для задачи {result_data['id']}")
+
 
     except WebSocketDisconnect:
         print(f"🔴 Агент потерялся: {agent.name}")
@@ -337,14 +349,22 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
             del active_agents[api_key]
 
 async def dispatch_task(task_data: dict):
-    if not active_agents:
-        print("⚠️ No active agents connected — task added to Redis queue")
-        await redis_client.lpush("task_queue", json.dumps(task_data))
-        return
+    await redis_client.lpush("task_queue", json.dumps(task_data))
+    print(f"📦 Task {task_data['id']} added to Redis queue")
+    if active_agents:
+        for api_key, ws in active_agents.items():
+            try:
+                await ws.send_text(json.dumps({
+                    "type": "task",
+                    "task_id": task_data["id"],
+                    "data": task_data
+                }))
+                print(f"📤 Task {task_data['id']} sent to agent {api_key}")
+            except Exception as e:
+                print(f"⚠️ Failed to send task to agent {api_key}: {e}")
+    else:
+        print("⚠️ No active agents connected — task will be processed locally by worker")
 
-    api_key, ws = next(iter(active_agents.items()))
-    await ws.send_text(json.dumps({"type": "task", "data": task_data}))
-    print(f"📤 Task sent to agent {api_key}")
 
 
 if __name__ == "__main__":

@@ -3,9 +3,15 @@ import requests
 import time
 import pandas as pd
 import re
+import os
+os.environ['NO_PROXY'] = 'localhost,127.0.0.1'
+os.environ.pop('HTTP_PROXY', None)
+os.environ.pop('HTTPS_PROXY', None)
 
-# apishka = "http://127.0.0.1:8000/api"
-apishka = "http://backend:8000/api/checks"
+apishka = "http://127.0.0.1:8000/api"
+# apishka = "http://backend:8000/api/checks"
+
+
 
 st.set_page_config(page_title="DNS чекалка", page_icon="🦦", layout="centered")
 st.title("🦦 Че-че-че")
