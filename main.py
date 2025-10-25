@@ -176,6 +176,7 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
 
 @app.get("/api/checks/{task_id}", tags=["Main Reqs"])
 async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
+    # Сначала проверяем, есть ли одиночный результат
     result = await db.execute(select(Result).where(Result.id == task_id))
     rec = result.scalar()
     if rec:
@@ -188,19 +189,14 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
             "error": rec.error
         }
 
+    # Теперь просто ищем по group_id
+    results = await db.execute(select(Result).where(Result.group_id == task_id))
+    res_list = results.scalars().all()
 
-    all_results = await db.execute(select(Result))
-    all_results_list = all_results.scalars().all()
-
-    filtered_results = []
-    for result in all_results_list:
-        if result.data and isinstance(result.data, dict) and result.data.get('group_id') == task_id:
-            filtered_results.append(result)
-
-    if filtered_results:
+    if res_list:
         return {
             "id": task_id,
-            "status": "completed" if all(r.status != "pending" for r in filtered_results) else "pending",
+            "status": "completed" if all(r.status != "pending" for r in res_list) else "pending",
             "results": [
                 {
                     "type": r.data.get("type") if r.data else None,
@@ -210,7 +206,7 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
                     "data": r.data,
                     "error": r.error
                 }
-                for r in filtered_results
+                for r in res_list
             ]
         }
 
@@ -262,10 +258,14 @@ async def worker(worker_id: int):
                             "type": "http"
                         }
                         status = "ok" if r.status_code < 400 else "fail"
-                        db.add(Result(id=task["id"], status=status,
-                                      code=r.status_code,
-                                      response_time=time.time()-start,
-                                      data=data))
+                        db.add(Result(
+                            id=task["id"],
+                            status=status,
+                            code=r.status_code,
+                            response_time=time.time()-start,
+                            data=data,
+                            group_id=task.get("group_id")
+                        ))
                         await db.commit()
 
                 elif task["type"] == "ping":
@@ -295,7 +295,8 @@ async def worker(worker_id: int):
                             "output": out_decoded,
                             "type": "ping"
                         },
-                        error=None if ok else err_decoded
+                        error=None if ok else err_decoded,
+                        group_id=task.get("group_id")
                     ))
                     await db.commit()
 
@@ -310,14 +311,18 @@ async def worker(worker_id: int):
                     except Exception as e:
                         ok = False
                         err = str(e)
-                    db.add(Result(id=task["id"], status="ok" if ok else "fail",
-                                  response_time=time.time()-start,
-                                  data={
-                                      "host": host,
-                                      "port": port,
-                                      "type": "tcp"
-                                  },
-                                  error=err))
+                    db.add(Result(
+                        id=task["id"],
+                        status="ok" if ok else "fail",
+                        response_time=time.time()-start,
+                        data={
+                            "host": host,
+                            "port": port,
+                            "type": "tcp"
+                        },
+                        error=err,
+                        group_id=task.get("group_id")
+                    ))
                     await db.commit()
 
                 elif task["type"] == "traceroute":
@@ -327,13 +332,17 @@ async def worker(worker_id: int):
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
                     ok = proc.returncode == 0
-                    db.add(Result(id=task["id"], status="ok" if ok else "fail",
-                                  response_time=time.time()-start,
-                                  data={
-                                      "trace": out.decode().splitlines(),
-                                      "type": "traceroute"
-                                  },
-                                  error=None if ok else err.decode()))
+                    db.add(Result(
+                        id=task["id"],
+                        status="ok" if ok else "fail",
+                        response_time=time.time()-start,
+                        data={
+                            "trace": out.decode().splitlines(),
+                            "type": "traceroute"
+                        },
+                        error=None if ok else err.decode(),
+                        group_id=task.get("group_id")
+                    ))
                     await db.commit()
 
                 elif task["type"] == "dns":
@@ -353,7 +362,8 @@ async def worker(worker_id: int):
                         data={
                             "records": dns_results,
                             "type": "dns"
-                        }
+                        },
+                        group_id=task.get("group_id")
                     ))
                     await db.commit()
 
@@ -362,7 +372,8 @@ async def worker(worker_id: int):
                     id=task["id"],
                     status="error",
                     error=str(e),
-                    data={"type": task["type"]}
+                    data={"type": task["type"]},
+                    group_id=task.get("group_id")
                 ))
                 await db.commit()
 
@@ -507,15 +518,16 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
                 existing = await db.get(Result, result_data["id"])
                 if not existing:
+                    db.add(new_result)
                     new_result = Result(
                         id=result_data["id"],
                         status=result_data["status"],
                         code=result_data.get("code"),
                         response_time=result_data.get("response_time"),
                         data=result_data.get("data"),
-                        error=result_data.get("error")
+                        error=result_data.get("error"),
+                        group_id=result_data.get("data", {}).get("group_id")
                     )
-                    db.add(new_result)
                     await db.commit()
                 else:
                     existing.status = result_data["status"]
@@ -523,10 +535,10 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     existing.response_time = result_data.get("response_time")
                     existing.data = result_data.get("data")
                     existing.error = result_data.get("error")
+                    existing.group_id = result_data.get("data", {}).get("group_id")
                     await db.commit()
 
                 print(f"✅ Результат получен от агента {agent.name} для задачи {result_data['id']}")
-
 
     except WebSocketDisconnect:
         print(f"🔴 Агент потерялся: {agent.name}")
@@ -538,7 +550,6 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
             await db.commit()
         if api_key in active_agents:
             del active_agents[api_key]
-
 async def dispatch_task(task_data: dict):
     await redis_client.lpush("task_queue", json.dumps(task_data))
     print(f"📦 Task {task_data['id']} added to Redis queue")

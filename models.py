@@ -21,6 +21,7 @@ class Result(Base):
     response_time = Column(Float, nullable=True)
     data = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
+    group_id = Column(String, nullable=True, index=True)
 
 class Agents(Base):
     __tablename__ = "agents"
