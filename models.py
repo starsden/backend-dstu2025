@@ -31,3 +31,13 @@ class Agents(Base):
     email = Column(String, nullable=True)
     api = Column(String, nullable=True)
 
+class ActiveAgents(Base):
+    __tablename__ = "active_agents"
+
+    id = Column(String, primary_key=True)
+    status = Column(String)
+    name = Column(String, nullable=True)
+    api = Column(String, nullable=True)
+
+
+

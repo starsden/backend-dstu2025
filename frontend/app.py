@@ -4,7 +4,8 @@ import time
 import pandas as pd
 import re
 
-apishka = "http://127.0.0.1:8000/api"
+# apishka = "http://127.0.0.1:8000/api"
+apishka = "http://backend:8000/api/checks"
 
 st.set_page_config(page_title="DNS чекалка", page_icon="🦦", layout="centered")
 st.title("🦦 Че-че-че")

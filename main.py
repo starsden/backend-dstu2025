@@ -4,17 +4,24 @@ from uuid import uuid4
 import asyncio, time, httpx, dns.resolver, json
 import redis.asyncio as redis
 import secrets
+import os
 
+from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy import insert
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, engine, get_db
-from models import Task, Result, Agents
+from models import Task, Result, Agents, ActiveAgents
 from smtp import send_api
 
-app = FastAPI(title="dns check")
+from sqlalchemy import Column, String
+from fastapi import HTTPException
 
+app = FastAPI(title="dns check")
+active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
+
+# redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0, encoding="utf-8", decode_responses=True)
 
 async def checkalka_redisa():
     try:
@@ -28,6 +35,9 @@ class CheckRequest(BaseModel):
     type: str
     port: int | None = None
     record_type: str | None = None
+class AgentApiKeyRequest(BaseModel):
+    api_key: str
+    name: str | None = None
 
 class AgentRegisterRequest(BaseModel):
     name: str
@@ -226,6 +236,115 @@ async def reg_ag(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
         "desc": req.desc,
         "email": req.email
     }
+
+
+@app.post("/api/agents/activate")
+async def activate_agent(req: AgentApiKeyRequest, db: AsyncSession = Depends(get_db)):
+    agent = await db.execute(select(Agents).where(Agents.api == req.api_key))
+    agent = agent.scalar()
+
+    if not agent:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    existing_active = await db.execute(
+        select(ActiveAgents).where(ActiveAgents.api == req.api_key)
+    )
+    if existing_active.scalar():
+        raise HTTPException(status_code=400, detail="Agent already activated")
+
+    active_agent_id = str(uuid4())
+    new_active_agent = ActiveAgents(
+        id=active_agent_id,
+        status="Active",
+        name=req.name or agent.name,
+        api=req.ap
+    )
+
+    db.add(new_active_agent)
+    await db.commit()
+
+    return {
+        "id": active_agent_id,
+        "status": "Active",
+        "name": new_active_agent.name,
+        "api_key": req.api_key,
+        "message": "Agent successfully activated"
+    }
+
+
+
+@app.websocket("/ws/agent")
+async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
+    await websocket.accept()
+    api_key = websocket.query_params.get("api_key")
+
+    if not api_key:
+        await websocket.close(code=4000)
+        return
+
+    agent_query = await db.execute(select(Agents).where(Agents.api == api_key))
+    agent = agent_query.scalar()
+    if not agent:
+        await websocket.close(code=4001)
+        return
+
+    active_agents[api_key] = websocket
+    existing_active = await db.execute(
+        select(ActiveAgents).where(ActiveAgents.api == api_key)
+    )
+    existing_active = existing_active.scalar()
+
+    if not existing_active:
+        new_active = ActiveAgents(
+            id=str(uuid4()),
+            status="Active",
+            name=agent.name,
+            api=api_key
+        )
+        db.add(new_active)
+        await db.commit()
+
+    print(f"🟢 Агент приконекчен: {agent.name}")
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            data = json.loads(message)
+
+            if data.get("type") == "result":
+                result_data = data["result"]
+                new_result = Result(
+                    id=result_data["id"],
+                    status=result_data["status"],
+                    code=result_data.get("code"),
+                    response_time=result_data.get("response_time"),
+                    data=result_data.get("data"),
+                    error=result_data.get("error")
+                )
+                db.add(new_result)
+                await db.commit()
+                print(f"✅ Результат получен от агента {agent.name} для задачи {result_data['id']}")
+
+    except WebSocketDisconnect:
+        print(f"🔴 Агент потерялся: {agent.name}")
+
+        result = await db.execute(select(ActiveAgents).where(ActiveAgents.api == api_key))
+        active_record = result.scalar()
+        if active_record:
+            await db.delete(active_record)
+            await db.commit()
+        if api_key in active_agents:
+            del active_agents[api_key]
+
+async def dispatch_task(task_data: dict):
+    if not active_agents:
+        print("⚠️ No active agents connected — task added to Redis queue")
+        await redis_client.lpush("task_queue", json.dumps(task_data))
+        return
+
+    api_key, ws = next(iter(active_agents.items()))
+    await ws.send_text(json.dumps({"type": "task", "data": task_data}))
+    print(f"📤 Task sent to agent {api_key}")
 
 
 if __name__ == "__main__":
