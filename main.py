@@ -65,7 +65,7 @@ async def startup():
     for i in range(5):
         asyncio.create_task(worker(i))
 
-@app.post("/api/checks", tags=["Main reqs"])
+@app.post("/api/checks", tags=["Main Reqs"])
 async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
     task_id = str(uuid4())
 
@@ -105,7 +105,7 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
     await dispatch_task(task_data)
     return {"id": task_id, "status": "queued"}
 
-@app.get("/api/checks/{task_id}", tags=["Main reqs"])
+@app.get("/api/checks/{task_id}", tags=["Main Reqs"])
 async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Result).where(Result.id == task_id))
     rec = result.scalar()
@@ -137,8 +137,30 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
                 for r in res_list
             ]
         }
-
     return {"id": task_id, "status": "pending"}
+
+@app.delete("/api/agents/{agent_id}", tags=["Agents Req"])
+async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+    q = await db.execute(select(Agents).where(Agents.id == agent_id))
+    a = q.scalar()
+    if not a:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    await db.delete(a)
+    await db.commit()
+    q = await db.execute(select(ActiveAgents).where(ActiveAgents.api == a.api))
+    aa = q.scalar()
+    if aa:
+        await db.delete(aa)
+        await db.commit()
+        if a.api in active_agents:
+            ws = active_agents[a.api]
+            try:
+                await ws.close(code=1000, reason="Agent deleted")
+                del active_agents[a.api]
+            except:
+                del active_agents[a.api]
+    return {"message": f"Agent {agent_id} deleted"}
+
 async def worker(worker_id: int):
     async with AsyncSession(engine) as db:
         while True:
