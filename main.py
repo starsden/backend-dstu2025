@@ -237,16 +237,31 @@ async def worker(worker_id: int):
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
                     out, err = await proc.communicate()
+                    try:
+                        decoded_out = out.decode("utf-8")
+                    except UnicodeDecodeError:
+                        decoded_out = out.decode("cp866", errors="replace")
+                    try:
+                        decoded_err = err.decode("utf-8")
+                    except UnicodeDecodeError:
+                        decoded_err = err.decode("cp866", errors="replace")
                     ok = proc.returncode == 0
                     resp_time = None
-                    if ok and b"time=" in out:
-                        line = out.decode().split("time=")[1]
-                        resp_time = float(line.split(" ")[0])
-                    db.add(Result(id=task["id"], status="ok" if ok else "fail",
-                                  response_time=resp_time,
-                                  data={"output": out.decode()},
-                                  error=None if ok else err.decode()))
+                    if ok and "time=" in decoded_out:
+                        try:
+                            line = decoded_out.split("time=")[1]
+                            resp_time = float(line.split(" ")[0])
+                        except:
+                            pass
+                    db.add(Result(
+                        id=task["id"],
+                        status="ok" if ok else "fail",
+                        response_time=resp_time,
+                        data={"output": decoded_out},
+                        error=None if ok else decoded_err
+                    ))
                     await db.commit()
+
 
                 elif task["type"] == "tcp":
                     host, port = task["target"], task.get("port", 80)
