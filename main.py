@@ -187,13 +187,20 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
             "data": rec.data,
             "error": rec.error
         }
-    results = await db.execute(select(Result).where(Result.data['group_id'].as_string() == task_id))
-    res_list = results.scalars().all()
 
-    if res_list:
+
+    all_results = await db.execute(select(Result))
+    all_results_list = all_results.scalars().all()
+
+    filtered_results = []
+    for result in all_results_list:
+        if result.data and isinstance(result.data, dict) and result.data.get('group_id') == task_id:
+            filtered_results.append(result)
+
+    if filtered_results:
         return {
             "id": task_id,
-            "status": "completed" if all(r.status != "pending" for r in res_list) else "pending",
+            "status": "completed" if all(r.status != "pending" for r in filtered_results) else "pending",
             "results": [
                 {
                     "type": r.data.get("type") if r.data else None,
@@ -203,34 +210,14 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
                     "data": r.data,
                     "error": r.error
                 }
-                for r in res_list
+                for r in filtered_results
             ]
         }
 
     task_query = await db.execute(select(Task).where(Task.id == task_id))
     main_task = task_query.scalar()
     if main_task and main_task.type == "full":
-        sub_results = await db.execute(select(Result).where(Result.data['group_id'].as_string() == task_id))
-        sub_res_list = sub_results.scalars().all()
-
-        if sub_res_list:
-            return {
-                "id": task_id,
-                "status": "completed" if all(r.status != "pending" for r in sub_res_list) else "pending",
-                "results": [
-                    {
-                        "type": r.data.get("type") if r.data else None,
-                        "status": r.status,
-                        "code": r.code,
-                        "response_time": r.response_time,
-                        "data": r.data,
-                        "error": r.error
-                    }
-                    for r in sub_res_list
-                ]
-            }
-        else:
-            return {"id": task_id, "status": "pending"}
+        return {"id": task_id, "status": "pending"}
 
     return {"id": task_id, "status": "pending"}
 
@@ -272,7 +259,7 @@ async def worker(worker_id: int):
                         data = {
                             "headers": dict(r.headers),
                             "url": str(r.url),
-                            "type": "http"  # ДОБАВЬТЕ ЭТО
+                            "type": "http"
                         }
                         status = "ok" if r.status_code < 400 else "fail"
                         db.add(Result(id=task["id"], status=status,
@@ -408,39 +395,6 @@ async def reg_ag(req: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
         "email": req.email
     }
 
-
-@app.post("/api/agents/activate", tags=["Agents Req"])
-async def activate_agent(req: AgentApiKeyRequest, db: AsyncSession = Depends(get_db)):
-    agent = await db.execute(select(Agents).where(Agents.api == req.api_key))
-    agent = agent.scalar()
-
-    if not agent:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-    existing_active = await db.execute(
-        select(ActiveAgents).where(ActiveAgents.api == req.api_key)
-    )
-    if existing_active.scalar():
-        raise HTTPException(status_code=400, detail="Agent already activated")
-
-    active_agent_id = str(uuid4())
-    new_active_agent = ActiveAgents(
-        id=active_agent_id,
-        status="Active",
-        name=req.name or agent.name,
-        api=req.ap
-    )
-
-    db.add(new_active_agent)
-    await db.commit()
-
-    return {
-        "id": active_agent_id,
-        "status": "Active",
-        "name": new_active_agent.name,
-        "api_key": req.api_key,
-        "message": "Agent successfully activated"
-    }
 
 
 @app.get("/api/agents", tags=["Admin Reqs"])
