@@ -176,7 +176,6 @@ async def checkkk(req: CheckRequest, db: AsyncSession = Depends(get_db)):
 
 @app.get("/api/checks/{task_id}", tags=["Main Reqs"])
 async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
-    # Сначала проверяем, есть ли одиночный результат
     result = await db.execute(select(Result).where(Result.id == task_id))
     rec = result.scalar()
     if rec:
@@ -189,7 +188,6 @@ async def get_check(task_id: str, db: AsyncSession = Depends(get_db)):
             "error": rec.error
         }
 
-    # Теперь просто ищем по group_id
     results = await db.execute(select(Result).where(Result.group_id == task_id))
     res_list = results.scalars().all()
 
@@ -518,16 +516,15 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
                 existing = await db.get(Result, result_data["id"])
                 if not existing:
-                    db.add(new_result)
                     new_result = Result(
                         id=result_data["id"],
                         status=result_data["status"],
                         code=result_data.get("code"),
                         response_time=result_data.get("response_time"),
                         data=result_data.get("data"),
-                        error=result_data.get("error"),
-                        group_id=result_data.get("data", {}).get("group_id")
+                        error=result_data.get("error")
                     )
+                    db.add(new_result)
                     await db.commit()
                 else:
                     existing.status = result_data["status"]
@@ -535,10 +532,10 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     existing.response_time = result_data.get("response_time")
                     existing.data = result_data.get("data")
                     existing.error = result_data.get("error")
-                    existing.group_id = result_data.get("data", {}).get("group_id")
                     await db.commit()
 
                 print(f"✅ Результат получен от агента {agent.name} для задачи {result_data['id']}")
+
 
     except WebSocketDisconnect:
         print(f"🔴 Агент потерялся: {agent.name}")
