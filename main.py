@@ -31,7 +31,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
-app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/papers", openapi_url="/papers/openapi.json")
+app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/papers")
 
 active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
