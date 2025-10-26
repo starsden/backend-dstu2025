@@ -12,19 +12,7 @@ services:
     depends_on:
       - redis
     environment:
-      - SERVICE=backend
       - REDIS_HOST=redis
-
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "8501:8501"
-    depends_on:
-      - backend
-    environment:
-      - SERVICE=frontend
 
   redis:
     image: redis:latest

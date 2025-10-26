@@ -13,9 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py database.py models.py smtp.py keys.py ./
-COPY frontend/ frontend/
 
-ENV SERVICE=backend
+ENV REDIS_HOST=redis
 
-# Запуск в зависимости от сервиса
-CMD ["sh", "-c", "if [ \"$SERVICE\" = \"backend\" ]; then uvicorn main:app --host 0.0.0.0 --port 8000; else streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0; fi"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
