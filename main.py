@@ -425,7 +425,8 @@ async def get_agents(db: AsyncSession = Depends(get_db), current_admin: Admin = 
             "desc": agent.desc,
             "email": agent.email,
             "status": "Active" if is_active else "Inactive",
-            "api_key": agent.api
+            "api_key": agent.api,
+            "ip": agent.last_ip
         })
 
     total = len(agents)
