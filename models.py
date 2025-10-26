@@ -31,6 +31,7 @@ class Agents(Base):
     name = Column(String, nullable=True)
     desc = Column(String, nullable=True)
     email = Column(String, nullable=True)
+    last_ip = Column(String, nullable=True)
     api = Column(String, nullable=True)
 
 class ActiveAgents(Base):
@@ -39,6 +40,7 @@ class ActiveAgents(Base):
     id = Column(String, primary_key=True)
     status = Column(String)
     name = Column(String, nullable=True)
+    ip = Column(String, nullable=True)
     api = Column(String, nullable=True)
 
 class Admin(Base):

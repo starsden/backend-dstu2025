@@ -31,7 +31,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
-app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/papers")
+app = FastAPI(title="Aeza x Culture Union", description="API для проверки DNS записей и не только", version="1.0.0", docs_url="/api/papers", openapi_url="/api/papers/openapi.json")
 
 active_agents: dict[str, WebSocket] = {}
 redis_client = redis.Redis(host='localhost', port=6379, db=0, encoding="utf-8", decode_responses=True)
@@ -472,7 +472,6 @@ async def ag_count(websocket: WebSocket):
         pass
 
 
-
 @app.websocket("/ws/agent")
 async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
     await websocket.accept()
@@ -488,10 +487,9 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
         await websocket.close(code=4001)
         return
 
+    client_ip = websocket.client.host
     active_agents[api_key] = websocket
-    existing_active = await db.execute(
-        select(ActiveAgents).where(ActiveAgents.api == api_key)
-    )
+    existing_active = await db.execute(select(ActiveAgents).where(ActiveAgents.api == api_key))
     existing_active = existing_active.scalar()
 
     if not existing_active:
@@ -499,12 +497,18 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
             id=str(uuid4()),
             status="Active",
             name=agent.name,
+            ip=client_ip,
             api=api_key
         )
         db.add(new_active)
-        await db.commit()
+    else:
+        existing_active.status = "Active"
+        existing_active.ip = client_ip
 
-    print(f"🟢 Агент приконекчен: {agent.name}")
+    agent.last_ip = client_ip
+    await db.commit()
+
+    print(f"🟢 Агент приконекчен: {agent.name} | IP: {client_ip}")
 
     try:
         while True:
@@ -513,6 +517,7 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
             if data.get("type") == "result":
                 result_data = data["result"]
+                print(f"Результат получен от агента {agent.name} | {result_data['status']} | {result_data.get('response_time', 'N/A')}")
 
                 existing = await db.get(Result, result_data["id"])
                 if not existing:
@@ -525,21 +530,17 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         error=result_data.get("error")
                     )
                     db.add(new_result)
-                    await db.commit()
                 else:
                     existing.status = result_data["status"]
                     existing.code = result_data.get("code")
                     existing.response_time = result_data.get("response_time")
                     existing.data = result_data.get("data")
                     existing.error = result_data.get("error")
-                    await db.commit()
 
-                print(f"✅ Результат получен от агента {agent.name} для задачи {result_data['id']}")
-
+                await db.commit()
 
     except WebSocketDisconnect:
         print(f"🔴 Агент потерялся: {agent.name}")
-
         result = await db.execute(select(ActiveAgents).where(ActiveAgents.api == api_key))
         active_record = result.scalar()
         if active_record:
@@ -547,6 +548,7 @@ async def agent_ws(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
             await db.commit()
         if api_key in active_agents:
             del active_agents[api_key]
+
 async def dispatch_task(task_data: dict):
     if active_agents:
         import random
