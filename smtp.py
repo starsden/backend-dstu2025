@@ -75,6 +75,9 @@ def send_api(email: str, name: str, api_key: str):
             <h1>Вы успешно зарегистрировали свою машину как агента сервиса checkpulse.ru!</h1>
             <p>Ваш персональный API-ключ:</p>
             <div class="key-box">{api_key}</div>
+            <p style="color: #888; text-align: center; font-size: 14px;">
+              <a href="https://github.com/CULTURE-UNION" style="color: #888; text-decoration: underline;">Установить репозиторий</a>
+            </p>
             <p class="footer">С любовью, команда checkpulse.ru</p>
           </div>
         </div>
